@@ -840,7 +840,7 @@ async def admin_checkin_status(
     account = db.get_account(aid)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    return await auth_manager.fetch_checkin_status(account, force=bool(force))
+    return await control_plane.checkin_status_one(account, force=bool(force))
 
 
 @app.get("/admin/accounts/checkin-status-all")
@@ -861,10 +861,7 @@ async def admin_claim_checkin(
     account = db.get_account(aid)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
-    result = await auth_manager.claim_daily_checkin(account)
-    if result.get("ok"):
-        result["resources"] = await auth_manager.fetch_account_resources(account, force=True)
-    return result
+    return await control_plane.claim_one(account)
 
 
 @app.post("/admin/accounts/checkin-all")

@@ -193,6 +193,194 @@ def test_extract_deepseek_finish_without_reasoning():
     assert turn["reasoning"] == ""
 
 
+def test_parse_credit_usage_from_entitlement_packs():
+    from providers.traework.quota import parse_credit_usage
+
+    remaining, used, limit, unlimited = parse_credit_usage(
+        {
+            "code": 0,
+            "user_entitlement_pack_list": [
+                {
+                    "entitlement_base_info": {"quota": {"credits_limit": 100}},
+                    "usage": {"credits_amount": 40},
+                },
+                {
+                    "entitlement_base_info": {"quota": {"credits_limit": 30}},
+                    "usage": {"credits_amount": 10},
+                },
+            ],
+            "usage_summary": {},
+        }
+    )
+    assert remaining == 80
+    assert used == 50
+    assert limit == 130
+    assert unlimited is False
+
+
+def test_parse_credit_usage_falls_back_to_usage_summary():
+    from providers.traework.quota import parse_credit_usage
+
+    remaining, used, limit, unlimited = parse_credit_usage(
+        {"usage_summary": {"total_amount": 12, "consumed_amount": 5}}
+    )
+    assert (remaining, used, limit, unlimited) == (7, 5, 12, False)
+
+
+class _JsonResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_fetch_checkin_refreshes_expired_token_before_status(monkeypatch):
+    from providers.traework import quota
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append((url, headers.get("Authorization")))
+            return _JsonResponse(200, {"code": 0, "enable": True, "checked_in": False, "credits": 15})
+
+    async def refresh(account):
+        return {**account, "access_token": "fresh-token", "expires_at": 9_999_999_999_999}
+
+    monkeypatch.setattr(quota.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(quota, "refresh_account", refresh)
+    account = {
+        "id": 7,
+        "name": "tw",
+        "access_token": "stale-token",
+        "expires_at": 1,
+        "extra": {"host": "https://api.trae.cn"},
+    }
+    row = asyncio.run(quota.fetch_checkin(account, force=True))
+    assert row["ok"] is True
+    assert row["already_claimed"] is False
+    assert row["credit"] == 15
+    assert calls == [
+        ("https://api.trae.cn/trae/api/v2/ug/checkin_credits/status", "Cloud-IDE-JWT fresh-token")
+    ]
+
+
+def test_fetch_quota_retries_auth_failure_and_reads_packs(monkeypatch):
+    from providers.traework import quota
+
+    calls = []
+    refreshed = {"n": 0}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            token = headers.get("Authorization")
+            calls.append(token)
+            if token.endswith("stale-token"):
+                return _JsonResponse(
+                    200,
+                    {
+                        "code": 1001,
+                        "message": "We're sorry, but we are not able to authenticate you.",
+                        "usage_summary": {},
+                        "user_entitlement_pack_list": [],
+                    },
+                )
+            return _JsonResponse(
+                200,
+                {
+                    "code": 0,
+                    "user_entitlement_pack_list": [
+                        {
+                            "entitlement_base_info": {"quota": {"credits_limit": 200}},
+                            "usage": {"credits_amount": 25},
+                        }
+                    ],
+                },
+            )
+
+    async def refresh(account):
+        refreshed["n"] += 1
+        return {**account, "access_token": "fresh-token", "expires_at": 9_999_999_999_999}
+
+    monkeypatch.setattr(quota.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(quota, "refresh_account", refresh)
+    snapshot = asyncio.run(
+        quota.fetch_quota(
+            {
+                "id": 8,
+                "access_token": "stale-token",
+                "expires_at": 9_999_999_999_999,
+                "extra": {"host": "https://api.trae.cn"},
+            }
+        )
+    )
+    assert refreshed["n"] == 1
+    assert calls == ["Cloud-IDE-JWT stale-token", "Cloud-IDE-JWT fresh-token"]
+    assert snapshot.ok is True
+    assert snapshot.remaining == 175
+    assert snapshot.unsupported is False
+
+
+def test_auth_failure_after_refresh_says_login_expired(monkeypatch):
+    from providers.traework import quota
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return _JsonResponse(
+                200,
+                {"code": 1001, "enable": False, "checked_in": False, "message": "authenticate you"},
+            )
+
+    async def refresh(account):
+        raise quota.TraeWorkAuthError("ExchangeToken failed: HTTP 401")
+
+    monkeypatch.setattr(quota.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(quota, "refresh_account", refresh)
+    row = asyncio.run(
+        quota.fetch_checkin(
+            {
+                "id": 9,
+                "name": "tw",
+                "access_token": "stale-token",
+                "expires_at": 9_999_999_999_999,
+            }
+        )
+    )
+    assert row["ok"] is False
+    assert row["status_code"] == 200
+    assert "重新登录" in row["message"]
+    assert "authenticate you" not in row["message"]
+
+
 def test_traework_sources_do_not_touch_workbuddy_stack():
     root = Path(__file__).resolve().parents[1] / "providers" / "traework"
     for path in root.rglob("*.py"):

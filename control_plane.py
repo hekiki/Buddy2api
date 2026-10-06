@@ -450,6 +450,55 @@ async def credit_summary(force: bool = False) -> dict:
     }
 
 
+def _checkin_channel_error(account: dict, channel: str, message: str) -> dict:
+    return {
+        "account_id": account.get("id"),
+        "account_name": account.get("nickname") or account.get("name") or str(account.get("id")),
+        "ok": False,
+        "claimed": False,
+        "already_claimed": False,
+        "status_code": 400,
+        "message": message,
+        "credit": 0,
+        "channel": channel,
+    }
+
+
+async def checkin_status_one(account: dict, force: bool = False) -> dict:
+    channel = str(account.get("provider") or "workbuddy")
+    if channel != "workbuddy":
+        provider = providers.get_provider(channel)
+        if provider is None:
+            return _checkin_channel_error(account, channel, f"Channel '{channel}' is not enabled")
+        fetch_fn = getattr(provider, "fetch_checkin", None)
+        if fetch_fn is None:
+            return _checkin_channel_error(account, channel, f"Channel '{channel}' does not support check-in")
+        result = await fetch_fn(account, force=force)
+        if isinstance(result, dict):
+            result["channel"] = channel
+        return result
+    return await auth_manager.fetch_checkin_status(account, force=force)
+
+
+async def claim_one(account: dict) -> dict:
+    channel = str(account.get("provider") or "workbuddy")
+    if channel != "workbuddy":
+        provider = providers.get_provider(channel)
+        if provider is None:
+            return _checkin_channel_error(account, channel, f"Channel '{channel}' is not enabled")
+        claim_fn = getattr(provider, "claim_checkin", None)
+        if claim_fn is None:
+            return _checkin_channel_error(account, channel, f"Channel '{channel}' does not support check-in")
+        result = await claim_fn(account)
+        if isinstance(result, dict):
+            result["channel"] = channel
+        return result
+    result = await auth_manager.claim_daily_checkin(account)
+    if result.get("ok"):
+        result["resources"] = await auth_manager.fetch_account_resources(account, force=True)
+    return result
+
+
 async def checkin_status_all(force: bool = False) -> dict:
     results = []
     for channel in providers.enabled_provider_ids():
@@ -508,13 +557,7 @@ async def checkin_all(channel_filter: list[str] | None = None) -> dict:
             if not first and gap:
                 await asyncio.sleep(gap)
             first = False
-            claim_fn = getattr(provider, "claim_checkin", None)
-            if claim_fn:
-                result = await claim_fn(account)
-            else:
-                result = await auth_manager.claim_daily_checkin(account)
-            if result.get("ok") and not claim_fn:
-                result["resources"] = await auth_manager.fetch_account_resources(account, force=True)
+            result = await claim_one(account)
             result["channel"] = channel
             results.append(result)
     wb_credit = round(
