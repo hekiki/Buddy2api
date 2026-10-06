@@ -19,6 +19,27 @@ def isolated_db(tmp_path, monkeypatch):
     credential_crypto.reset_cache()
 
 
+def test_claim_one_uses_traework_claim_not_workbuddy(monkeypatch):
+    account = {"id": 3, "provider": "traework", "name": "tw", "nickname": "tw"}
+    called = {}
+
+    class Provider:
+        async def claim_checkin(self, row):
+            called["account_id"] = row["id"]
+            return {"ok": True, "claimed": True, "account_id": row["id"], "message": "success"}
+
+    monkeypatch.setattr(control_plane.providers, "get_provider", lambda channel: Provider() if channel == "traework" else None)
+
+    async def workbuddy_claim(row):
+        raise AssertionError("workbuddy claim")
+
+    monkeypatch.setattr(auth_manager, "claim_daily_checkin", workbuddy_claim)
+    result = asyncio.run(control_plane.claim_one(account))
+    assert called["account_id"] == 3
+    assert result["channel"] == "traework"
+    assert result["claimed"] is True
+
+
 def test_create_key_requires_channel(isolated_db):
     from fastapi import HTTPException
     import server
