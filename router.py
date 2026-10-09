@@ -161,6 +161,140 @@ async def ensure_usable(channel: str) -> None:
     )
 
 
+def _estimate_text_tokens(text: str) -> int:
+    """Count CJK and fullwidth characters as one token; other text as about four chars."""
+    cjk = 0
+    other = 0
+    for char in text:
+        code = ord(char)
+        if (
+            0x3400 <= code <= 0x9FFF
+            or 0xF900 <= code <= 0xFAFF
+            or 0x3000 <= code <= 0x303F
+            or 0xFF00 <= code <= 0xFFEF
+        ):
+            cjk += 1
+        else:
+            other += 1
+    return cjk + (other + 3) // 4
+
+
+def _estimate_value(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return _estimate_text_tokens(value)
+    if isinstance(value, list):
+        return sum(_estimate_value(item) for item in value)
+    if isinstance(value, dict):
+        return sum(_estimate_value(key) + _estimate_value(item) for key, item in value.items())
+    return _estimate_text_tokens(str(value))
+
+
+def estimate_prompt_tokens(payload: dict) -> int:
+    """Rough prompt size used only for the Codex pre-flight gate."""
+    return max(1, _estimate_value(payload))
+
+
+CODEX_PROMPT_TOKEN_CAP = 500000
+
+
+def codex_prompt_limit(channel: str, model: str) -> tuple[int, int]:
+    """Return the Codex-only input budget and the window used to derive it."""
+    from model_capacity import capacity_fields
+    import catalog
+
+    row = next(
+        (item for item in catalog.current_models(channel) if item.get("id") == model),
+        {},
+    )
+    confirmed = capacity_fields(row).get("context_window")
+    window = min(confirmed, CODEX_PROMPT_TOKEN_CAP) if confirmed else CODEX_PROMPT_TOKEN_CAP
+    return max(1, window - 32768), window
+
+
+def _is_system_item(item) -> bool:
+    return isinstance(item, dict) and item.get("role") in ("system", "developer")
+
+
+def _is_tool_carrier(item) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("type") in ("function_call", "function_call_output"):
+        return True
+    if item.get("role") == "tool":
+        return True
+    return item.get("role") == "assistant" and bool(item.get("tool_calls"))
+
+
+def _history_segments(items: list) -> list[list]:
+    """Keep a tool call and its results in one segment so trimming cannot split them."""
+    segments = []
+    index = 0
+    while index < len(items):
+        item = items[index]
+        if _is_tool_carrier(item) or (isinstance(item, dict) and item.get("type") == "reasoning"):
+            group = []
+            while index < len(items) and (
+                _is_tool_carrier(items[index])
+                or (isinstance(items[index], dict) and items[index].get("type") == "reasoning")
+            ):
+                group.append(items[index])
+                index += 1
+            segments.append(group)
+            continue
+        segments.append([item])
+        index += 1
+    return segments
+
+
+def _trim_history(payload: dict, key: str, limit: int) -> list:
+    """Drop oldest history until the whole payload fits, keeping the newest segment."""
+    segments = _history_segments(payload[key])
+    while estimate_prompt_tokens(payload) > limit and len(segments) > 1:
+        drop_at = next(
+            (
+                index
+                for index, segment in enumerate(segments[:-1])
+                if not all(_is_system_item(item) for item in segment)
+            ),
+            None,
+        )
+        if drop_at is None:
+            drop_at = 0
+        segments.pop(drop_at)
+        payload[key] = [item for segment in segments for item in segment]
+    return payload[key]
+
+
+def trim_codex_prompt(payload: dict, channel: str, model: str) -> dict:
+    """Trim old Codex history so the current turn can continue."""
+    limit, window = codex_prompt_limit(channel, model)
+    if estimate_prompt_tokens(payload) <= limit:
+        return payload
+    trimmed = copy.deepcopy(payload)
+    if isinstance(trimmed.get("input"), list):
+        _trim_history(trimmed, "input", limit)
+    elif isinstance(trimmed.get("messages"), list):
+        _trim_history(trimmed, "messages", limit)
+    if estimate_prompt_tokens(trimmed) <= limit:
+        return trimmed
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": {
+                "message": (
+                    f"Codex prompt is too long for {model}: the newest request still exceeds "
+                    f"the {limit}-token Codex budget ({window}-token window) after trimming old history."
+                ),
+                "type": "invalid_request_error",
+                "code": "prompt_too_long",
+                "param": "input",
+            }
+        },
+    )
+
+
 def dispatch_payload(payload: dict, inner: str) -> dict:
     body = copy.copy(payload)
     body["model"] = inner

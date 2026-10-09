@@ -11,6 +11,7 @@ from fastapi import HTTPException
 import credential_crypto
 import database as db
 import proxy
+import router
 import reasoning_controls
 import responses
 import server
@@ -1026,6 +1027,151 @@ def test_responses_to_chat_keeps_sequential_function_call_turns_separate():
         "call_first",
         "call_second",
     ]
+
+
+
+GUARDIAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "risk_level": {"type": "string"},
+        "user_authorization": {"type": "string"},
+        "outcome": {"type": "string"},
+        "rationale": {"type": "string"},
+    },
+    "required": ["risk_level", "user_authorization", "outcome", "rationale"],
+    "additionalProperties": False,
+}
+
+
+def test_responses_to_chat_maps_guardian_json_schema_without_touching_text_requests():
+    schema_payload = {
+        "model": "deepseek-v4.1-flash",
+        "input": "review this escalation",
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "guardian_assessment",
+                "strict": True,
+                "description": "approval review",
+                "schema": GUARDIAN_SCHEMA,
+            }
+        },
+    }
+    original = json.loads(json.dumps(schema_payload))
+
+    chat_payload = responses.responses_to_chat(schema_payload)
+    body = proxy.build_backend_body(chat_payload)
+
+    assert schema_payload == original
+    assert chat_payload["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "guardian_assessment",
+            "schema": GUARDIAN_SCHEMA,
+            "strict": True,
+            "description": "approval review",
+        },
+    }
+    assert body["response_format"] == chat_payload["response_format"]
+    constraint = next(
+        message["content"]
+        for message in chat_payload["messages"]
+        if message["role"] == "system" and "JSON" in message["content"]
+    )
+    assert "risk_level" in constraint
+    assert "markdown" in constraint
+
+    object_payload = responses.responses_to_chat({
+        "model": "deepseek-v4.1-flash",
+        "input": "review",
+        "text": {"format": {"type": "json_object"}},
+    })
+    assert object_payload["response_format"] == {"type": "json_object"}
+
+    for text_format in (None, {"type": "text"}):
+        payload = {"model": "deepseek-v4.1-flash", "input": "hello"}
+        if text_format is not None:
+            payload["text"] = {"format": text_format}
+        plain = responses.responses_to_chat(payload)
+        assert "response_format" not in plain
+        assert all("JSON" not in str(message.get("content") or "") for message in plain["messages"])
+
+
+def test_responses_json_schema_constraint_survives_codex_instruction_replacement():
+    long_instructions = (
+        "sandbox_mode require_escalated\n"
+        + ("Help with the requested coding task. " * 80)
+    )
+    assert len(long_instructions) > 1200
+
+    chat_payload = responses.responses_to_chat({
+        "model": "deepseek-v4.1-flash",
+        "instructions": long_instructions,
+        "input": "git commit",
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "guardian_assessment",
+                "strict": True,
+                "schema": GUARDIAN_SCHEMA,
+            }
+        },
+    })
+
+    system_messages = [
+        message["content"]
+        for message in chat_payload["messages"]
+        if message["role"] == "system"
+    ]
+    assert responses._CODEX_SAFE_SYSTEM_PROMPT in system_messages
+    assert any("risk_level" in content and "outcome" in content for content in system_messages)
+    assert "response_format" in chat_payload
+
+
+def test_codex_prompt_gate_trims_old_history_and_keeps_latest(monkeypatch):
+    monkeypatch.setattr(router, "codex_prompt_limit", lambda channel, model: (30, 128))
+    payload = {
+        "model": "deepseek-v4-flash",
+        "input": [
+            {"role": "system", "content": "keep"},
+            {"role": "user", "content": "old " * 40},
+            {"role": "user", "content": "latest"},
+        ],
+    }
+
+    trimmed = router.trim_codex_prompt(payload, "workbuddy", "deepseek-v4-flash")
+
+    assert trimmed["input"][0]["content"] == "keep"
+    assert trimmed["input"][-1]["content"] == "latest"
+    assert len(trimmed["input"]) < len(payload["input"])
+    assert router.estimate_prompt_tokens(trimmed) <= 30
+    assert proxy.resolve_model_alias("gpt-5.6-luna") == "deepseek-v4-flash"
+
+
+def test_codex_trim_counts_cjk_and_keeps_tool_pairs(monkeypatch):
+    assert router.estimate_prompt_tokens({"input": "你" * 4000}) >= 4000
+
+    payload = {
+        "model": "deepseek-v4-flash",
+        "instructions": "I" * 160,
+        "input": [
+            {"type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "R" * 400},
+            {"type": "message", "role": "user", "content": "latest"},
+        ],
+    }
+    monkeypatch.setattr(
+        router,
+        "codex_prompt_limit",
+        lambda channel, model: (router.estimate_prompt_tokens(payload) - 1, 128),
+    )
+
+    trimmed = router.trim_codex_prompt(payload, "workbuddy", "deepseek-v4-flash")
+
+    assert [item.get("type") for item in trimmed["input"]] == ["message"]
+    assert trimmed["input"][-1]["content"] == "latest"
+    assert trimmed["instructions"] == "I" * 160
+    assert router.estimate_prompt_tokens(trimmed) <= router.estimate_prompt_tokens(payload) - 1
 
 
 def test_responses_stream_reassembles_byte_split_tool_arguments():
@@ -3172,6 +3318,38 @@ def test_codex_sanitize_still_sanitizes_codex_prompts():
     assert "security policy" not in cleaned
     # Codex 特征段落被移除/清洗（本例所有特征段被删除后为空串，同样证明清洗生效）
     assert cleaned == "" or "coding assistant" in cleaned
+
+
+def test_current_codex_prompt_is_replaced_when_legacy_markers_are_absent():
+    """New Codex CLI prompts must still enter the sanitizer."""
+    prompt = (
+        "You are Codex, a coding agent.\n"
+        "Use the workspace and follow approval rules for shell commands.\n"
+        + ("Keep helping with the coding task. " * 80)
+    )
+    payload = {
+        "model": "deepseek-v4-flash",
+        "instructions": prompt,
+        "input": "hello",
+    }
+
+    chat_payload = responses.responses_to_chat(payload)
+
+    assert responses._looks_like_codex_prompt(prompt)
+    assert chat_payload["messages"][0]["content"] == responses._CODEX_SAFE_SYSTEM_PROMPT
+    assert "approval" not in chat_payload["messages"][0]["content"]
+
+
+def test_mentions_of_codex_or_coding_agent_alone_are_not_sanitized():
+    prompt = "This note mentions Codex but is not the Codex client prompt. " + ("x" * 1500)
+    quoted = "The docs say you are Codex when using the shell. " + ("x" * 1500)
+    payload = {"instructions": prompt, "input": "hello"}
+
+    chat_payload = responses.responses_to_chat(payload)
+    quoted_payload = responses.responses_to_chat({"instructions": quoted, "input": "hello"})
+
+    assert chat_payload["messages"][0]["content"] == prompt
+    assert quoted_payload["messages"][0]["content"] == quoted
 
 
 def test_codex_sanitize_passthrough_without_system_prompt():
