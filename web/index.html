@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+try{if(localStorage.getItem('cb_gw_theme')==='gold')document.documentElement.dataset.theme='gold'}catch(e){}
+</script>
 <title>Buddy 2 API</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -366,6 +369,105 @@ table{font-size:12px}.table-scroll{background:#fff}th{padding:9px 12px;backgroun
 .toasts{top:82px}.toast{border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.14)}.toast.info{background:#3f3f3d}
 .load{padding:60px}.spin{border-color:#ddd8d1;border-top-color:var(--accent)}
 .empty .em{font-size:22px}.pager{padding:0 12px 12px}
+.theme-cta{height:40px;border:1px solid #47423b;background:#2c2a27;color:#fff;border-radius:7px;padding:0 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.theme-cta:hover{border-color:var(--accent);color:var(--accent)}
+.activity-cell.heat-0{background:#e8e9e6;color:#777872}
+.activity-cell.heat-1{background:#fff0ce;color:#8a5d22}
+.activity-cell.heat-2{background:#ffc98f;color:#734217}
+.activity-cell.heat-3{background:#ff9855;color:#592b0e}
+.activity-cell.heat-4{background:#f15f14;color:#fff}
+.activity-cell.heat-5{background:#3f403e;color:#fff}
+.heat-swatch.h1{background:#fff0ce}.heat-swatch.h2{background:#ffc98f}.heat-swatch.h3{background:#ff9855}.heat-swatch.h4{background:#f15f14}.heat-swatch.h5{background:#3f403e}
+
+/* Black-gold theme, adapted from the lab-agent dashboard palette. */
+html[data-theme="gold"] body{background:#0a0a0a;color:#f5f5f5}
+html[data-theme="gold"] .layout{
+  --accent:#e8c547;--accent-strong:#c9a227;--accent-soft:#2a2412;--accent-border:#6d5a1e;
+  --bg:#0a0a0a;--fg:#f5f5f5;--fg2:#d8d8d8;--fg3:#9a9a9a;
+  --border:#3a3a3a;--border2:#2a2a2a;--hover:#1c1c1c;--input:#111;
+  --blue:var(--accent);--blue-bg:#2a2412;--blue-soft:#16140e;--blue-border:var(--accent-border);
+  --green:#8fd89c;--green-bg:#142218;--red:#ff8585;--red-bg:#2a1414;
+  background:#0a0a0a;color:#f5f5f5
+}
+html[data-theme="gold"] .topbar{background:#111;border-bottom-color:#3a3a3a;box-shadow:inset 0 -1px 0 rgba(232,197,71,.28)}
+html[data-theme="gold"] .brand-symbol{background:#1a160e;color:#e8c547;border:1px solid rgba(232,197,71,.45);box-shadow:0 0 16px rgba(232,197,71,.18)}
+html[data-theme="gold"] .brand-meta{color:#9a9a9a}
+html[data-theme="gold"] .topnav .nav-item{color:#9a9a9a}
+html[data-theme="gold"] .topnav .nav-item:hover{background:#1c1c1c;color:#f5f5f5}
+html[data-theme="gold"] .topnav .nav-item.on{background:#242424;border-color:#6d5a1e;color:#f5f5f5}
+html[data-theme="gold"] .theme-cta{background:#1a160e;border-color:rgba(232,197,71,.45);color:#e8c547}
+html[data-theme="gold"] .refresh-cta{border-color:#c9a227;background:#e8c547;color:#1a160e}
+html[data-theme="gold"] .refresh-cta:hover{background:#c9a227;color:#1a160e}
+html[data-theme="gold"] .update-cta{background:#2a2412;border-color:#6d5a1e;color:#e8c547}
+html[data-theme="gold"] .update-cta:hover{background:#3a3218;color:#ffe08a}
+html[data-theme="gold"] .tbar,
+html[data-theme="gold"] .card,
+html[data-theme="gold"] .today-usage,
+html[data-theme="gold"] .dash-hero,
+html[data-theme="gold"] .modal,
+html[data-theme="gold"] .table-scroll,
+html[data-theme="gold"] .seg,
+html[data-theme="gold"] .seg button{background:#161616;color:#f5f5f5}
+html[data-theme="gold"] th{background:#1c1c1c;color:#9a9a9a}
+html[data-theme="gold"] tr:hover td{background:#1c1c1c}
+html[data-theme="gold"] .btn{background:#1c1c1c;border-color:#3a3a3a;color:#f5f5f5}
+html[data-theme="gold"] .btn:hover{background:#242424;border-color:#6d5a1e}
+html[data-theme="gold"] .btn.pri{background:#e8c547;border-color:#e8c547;color:#1a160e}
+html[data-theme="gold"] .btn.pri:hover{background:#c9a227;border-color:#c9a227;color:#1a160e}
+html[data-theme="gold"] .btn.danger{background:#1c1c1c;color:#ff8585;border-color:#5a3030}
+html[data-theme="gold"] .today-period,
+html[data-theme="gold"] .health-kpi,
+html[data-theme="gold"] .metric,
+html[data-theme="gold"] .callout,
+html[data-theme="gold"] .quick-row .qv,
+html[data-theme="gold"] .info-row .v{background:#1c1c1c;color:#d8d8d8}
+html[data-theme="gold"] .today-metric.requests{--metric:#e8c547;--metric-bg:#2a2412}
+html[data-theme="gold"] .today-metric.tokens{--metric:#8fd89c;--metric-bg:#142218}
+html[data-theme="gold"] .today-metric.credit{--metric:#d8d8d8;--metric-bg:#242424}
+html[data-theme="gold"] .today-hour-chart{--chart:#e8c547;--chart-soft:#2a2412}
+html[data-theme="gold"] .today-hour-chart.tokens{--chart:#8fd89c;--chart-soft:#142218}
+html[data-theme="gold"] .today-hour-chart.credit{--chart:#d8d8d8;--chart-soft:#242424}
+html[data-theme="gold"] .bar{background:#6d5a1e}
+html[data-theme="gold"] .bar:hover,
+html[data-theme="gold"] .today-hour-chart .seg button.on,
+html[data-theme="gold"] .setup-tabs button.on{background:#e8c547;color:#1a160e}
+html[data-theme="gold"] .trend-bar{background:linear-gradient(180deg,#ffe08a 0%,#e8c547 100%)}
+html[data-theme="gold"] .trend-bar.future{background:#3a3a3a}
+html[data-theme="gold"] .donut-hole,
+html[data-theme="gold"] .hour-chart-empty span,
+html[data-theme="gold"] .searchbox,
+html[data-theme="gold"] .selectctl,
+html[data-theme="gold"] .numctl,
+html[data-theme="gold"] .field input,
+html[data-theme="gold"] .field textarea,
+html[data-theme="gold"] .field select{background:#111;color:#f5f5f5;border-color:#3a3a3a}
+html[data-theme="gold"] .mini-grid span,
+html[data-theme="gold"] .hour-grid span{border-top-color:#3a3a3a}
+html[data-theme="gold"] .mini-dot{background:#111}
+html[data-theme="gold"] .seg button.on{background:#e8c547;color:#1a160e}
+html[data-theme="gold"] .codeblk{background:#111;color:#f5f5f5;border-color:#3a3a3a}
+html[data-theme="gold"] .codeblk .k{color:#e8c547}
+html[data-theme="gold"] .codeblk .s{color:#ffe08a}
+html[data-theme="gold"] .badge.warn,
+html[data-theme="gold"] .tag.warn{background:#2a2412;color:#e8c547;border-color:#6d5a1e}
+html[data-theme="gold"] .badge.inactive,
+html[data-theme="gold"] .tag{background:#1c1c1c;color:#d8d8d8;border-color:#3a3a3a}
+html[data-theme="gold"] .activity-cell.heat-0{background:#1c1c1c;color:#9a9a9a}
+html[data-theme="gold"] .activity-cell.heat-1{background:#2a2412;color:#e8c547}
+html[data-theme="gold"] .activity-cell.heat-2{background:#4a3d14;color:#ffe08a}
+html[data-theme="gold"] .activity-cell.heat-3{background:#8a7020;color:#1a160e}
+html[data-theme="gold"] .activity-cell.heat-4{background:#c9a227;color:#1a160e}
+html[data-theme="gold"] .activity-cell.heat-5{background:#e8c547;color:#1a160e}
+html[data-theme="gold"] .heat-swatch.h1{background:#2a2412}
+html[data-theme="gold"] .heat-swatch.h2{background:#4a3d14}
+html[data-theme="gold"] .heat-swatch.h3{background:#8a7020}
+html[data-theme="gold"] .heat-swatch.h4{background:#c9a227}
+html[data-theme="gold"] .heat-swatch.h5{background:#e8c547}
+html[data-theme="gold"] .ov{background:rgba(0,0,0,.62)}
+html[data-theme="gold"] .toast.info{background:#1a160e;color:#e8c547}
+@media (max-width:900px){
+  html[data-theme="gold"] .topnav{background:#0a0a0a}
+}
 
 @media (max-width:1180px){
   .topbar{grid-template-columns:auto 1fr;padding:10px 16px;gap:10px}.topnav{grid-column:1/-1;grid-row:2;justify-content:flex-start;overflow-x:auto;padding-bottom:1px}.top-actions{grid-column:2;grid-row:1}
@@ -406,6 +508,13 @@ const I={
   copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
 };
 const localMode=/* LOCAL_MODE */ false;
+const uiTheme=ref(document.documentElement.dataset.theme==='gold'?'gold':'warm');
+function applyTheme(next){
+  uiTheme.value=next==='gold'?'gold':'warm';
+  if(uiTheme.value==='gold')document.documentElement.dataset.theme='gold';
+  else delete document.documentElement.dataset.theme;
+  try{localStorage.setItem('cb_gw_theme',uiTheme.value)}catch(e){}
+}
 const api={
   async get(p,t){const h={};if(t)h.Authorization='Bearer '+t;const r=await fetch(p,{headers:h,credentials:'same-origin'});if(!r.ok)throw new Error(r.status);return r.json()},
   async post(p,b,t){const h={'Content-Type':'application/json'};if(t)h.Authorization='Bearer '+t;const r=await fetch(p,{method:'POST',headers:h,body:JSON.stringify(b),credentials:'same-origin'});if(!r.ok)throw new Error(r.status);return r.json()},
@@ -459,8 +568,9 @@ createApp({
       }catch(e){tf(apiErr(e,'更新失败'),'err');updating.value=false}
     }
     const nav=[{k:'accounts',l:'账号管理',i:I.users},{k:'dashboard',l:'Dashboard',i:I.dash},{k:'keys',l:'API Keys',i:I.key},{k:'models',l:'模型配置',i:I.cpu},{k:'logs',l:'请求日志',i:I.log},{k:'settings',l:'设置',i:I.gear}];
+    function toggleTheme(){applyTheme(uiTheme.value==='gold'?'warm':'gold')}
     onMounted(()=>checkVer(false));
-    return{page,token,toasts,tf,go,saveToken,hardRefresh,nav,I,ver,updating,checkVer,applyUpdate}
+    return{page,token,toasts,tf,go,saveToken,hardRefresh,nav,I,ver,updating,checkVer,applyUpdate,uiTheme,toggleTheme}
   },
   template:`
   <div class="layout">
@@ -468,6 +578,7 @@ createApp({
       <div class="brand-block"><div class="brand-symbol">B2</div><div class="brand-copy"><div class="brand-title">Buddy 2 API</div><div class="brand-meta">Local model gateway · v__APP_VERSION__</div></div></div>
       <nav class="topnav"><div v-for="n in nav" :key="n.k" class="nav-item" :class="{on:page===n.k}" @click="go(n.k)" v-html="n.i+'<span>'+n.l+'</span>'"></div></nav>
       <div class="top-actions">
+        <button class="theme-cta" @click="toggleTheme">{{uiTheme==='gold'?'暖色':'黑金'}}</button>
         <button v-if="ver&&ver.update_available" class="update-cta" :disabled="updating" @click="applyUpdate"><span v-html="I.refresh"></span><span>{{updating?'更新中':'更新到 v'+ver.latest}}</span></button>
         <button class="refresh-cta" @click="hardRefresh"><span v-html="I.refresh"></span><span>刷新</span></button>
       </div>
@@ -602,22 +713,23 @@ createApp({
   });
   const qualityPie=computed(()=>{
     const t=rangeOf(),success=Number(t.success||0),errors=Number(t.errors||0),filtered=Number(t.filtered||0),total=success+errors+filtered;
-    const slices=[{k:'ok',label:'成功',value:success,color:'#128665'},{k:'err',label:'错误',value:errors,color:'#cf3f32'},{k:'warn',label:'过滤',value:filtered,color:'#d99700'}].map(x=>({...x,pct:total?x.value/total*100:0}));
+    const gold=uiTheme.value==='gold';
+    const slices=[{k:'ok',label:'成功',value:success,color:gold?'#8fd89c':'#128665'},{k:'err',label:'错误',value:errors,color:gold?'#ff8585':'#cf3f32'},{k:'warn',label:'过滤',value:filtered,color:gold?'#f6c86f':'#d99700'}].map(x=>({...x,pct:total?x.value/total*100:0}));
     return{total,slices,style:pieStyle(slices,total)}
   });
   const modelPie=computed(()=>{
     const rows=rangeOf().model_stats||s.value?.model_stats||[],total=rows.reduce((a,m)=>a+Number(m.count||0),0);
-    const colors=['#e85d13','#14755f','#45566a','#d99700','#8a6a4a','#9aa0a6'];
+    const colors=uiTheme.value==='gold'?['#e8c547','#8fd89c','#d8d8d8','#f6c86f','#c9a227','#9a9a9a']:['#e85d13','#14755f','#45566a','#d99700','#8a6a4a','#9aa0a6'];
     const slices=rows.slice(0,5).map((m,i)=>({label:m.model,value:Number(m.count||0),color:colors[i]}));
     const rest=rows.slice(5).reduce((a,m)=>a+Number(m.count||0),0);
     if(rest)slices.push({label:'其他',value:rest,color:colors[5]});
     const withPct=slices.map(x=>({...x,pct:total?x.value/total*100:0}));
     return{total,slices:withPct,style:pieStyle(withPct,total)}
   });
-  function heatStyle(v,max){const r=Math.max(0,Math.min(1,Number(v||0)/Math.max(Number(max||1),1)));if(!v)return{background:'#e8e9e6',color:'#777872'};if(r<.25)return{background:'#fff0ce',color:'#8a5d22'};if(r<.5)return{background:'#ffc98f',color:'#734217'};if(r<.75)return{background:'#ff9855',color:'#592b0e'};if(r<.9)return{background:'#f15f14',color:'#fff'};return{background:'#3f403e',color:'#fff'}}
+  function heatClass(v,max){const r=Math.max(0,Math.min(1,Number(v||0)/Math.max(Number(max||1),1)));if(!v)return 'heat-0';if(r<.25)return 'heat-1';if(r<.5)return 'heat-2';if(r<.75)return 'heat-3';if(r<.9)return 'heat-4';return 'heat-5'}
   function heatValue(kind,v){return kind==='tokens'?tok(v):(kind==='credit'?money(v):n(v))}
   onMounted(load);
-  return{s,credit,ld,cld,periodLoading,copied,err,updatedAt,PERIODS,CHART_TYPES,statsPeriod,setPeriod,chartType,setChartType,periodMeta,periodCaption,todayLabel,todayUsage,todayChartMetric,todayChart,hourLine,qualityPie,modelPie,load,refreshCredit,n,tok,pct,money,ms,fmt,healthClass,healthText,rateWidth,copy,age,expireMeta,heatDaily,heatRows,heatStyle,heatValue,channelUnitLabel,channelQuotaText,rangeOf,I}
+  return{s,credit,ld,cld,periodLoading,copied,err,updatedAt,PERIODS,CHART_TYPES,statsPeriod,setPeriod,chartType,setChartType,periodMeta,periodCaption,todayLabel,todayUsage,todayChartMetric,todayChart,hourLine,qualityPie,modelPie,load,refreshCredit,n,tok,pct,money,ms,fmt,healthClass,healthText,rateWidth,copy,age,expireMeta,heatDaily,heatRows,heatClass,heatValue,channelUnitLabel,channelQuotaText,rangeOf,I}
 },template:`
 <div>
   <div class="phead"><h1>运行总览</h1><p>网关状态、额度和调用强度</p></div>
@@ -715,9 +827,9 @@ createApp({
         <div class="chart-box" v-if="heatDaily.length">
           <div class="activity-scroll"><div class="activity-map" :class="{'days-30':heatDaily.length>7}">
             <div class="activity-corner">指标</div><div class="activity-head" v-for="d in heatDaily" :key="'h-'+d.date">{{heatDaily.length>7?d.date.slice(8):d.date.slice(5)}}</div>
-            <template v-for="row in heatRows" :key="row.kind"><div class="activity-label">{{row.name}}</div><div class="activity-cell" v-for="(v,i) in row.values" :key="row.kind+'-'+i" :style="heatStyle(v,row.max)"><strong>{{heatValue(row.kind,v)}}</strong></div></template>
+            <template v-for="row in heatRows" :key="row.kind"><div class="activity-label">{{row.name}}</div><div class="activity-cell" v-for="(v,i) in row.values" :key="row.kind+'-'+i" :class="heatClass(v,row.max)"><strong>{{heatValue(row.kind,v)}}</strong></div></template>
           </div></div>
-          <div class="heat-legend"><span>低</span><span class="heat-swatch" style="background:#fff0ce"></span><span class="heat-swatch" style="background:#ffc98f"></span><span class="heat-swatch" style="background:#ff9855"></span><span class="heat-swatch" style="background:#f15f14"></span><span class="heat-swatch" style="background:#3f403e"></span><span>高</span></div>
+          <div class="heat-legend"><span>低</span><span class="heat-swatch h1"></span><span class="heat-swatch h2"></span><span class="heat-swatch h3"></span><span class="heat-swatch h4"></span><span class="heat-swatch h5"></span><span>高</span></div>
         </div>
         <div class="empty" v-else>暂无趋势数据</div>
       </div>
