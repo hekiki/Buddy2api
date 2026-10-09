@@ -3,6 +3,7 @@ import json
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -753,6 +754,69 @@ def test_record_request_updates_log_and_counters_once(isolated_db):
     assert sum(bucket["requests"] for bucket in hourly) == 1
     assert sum(bucket["tokens"] for bucket in hourly) == 7
     assert sum(bucket["credit"] for bucket in hourly) == 0.25
+
+
+def test_get_stats_supports_period_windows(isolated_db):
+    def put_log(created_at, tokens, credit, model="auto"):
+        with db.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO logs
+                    (model, stream, prompt_tokens, completion_tokens, total_tokens, credit,
+                     finish_reason, duration_ms, status_code, error_msg, provider, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (model, 0, 0, tokens, tokens, credit, "stop", 40, 200, "", "workbuddy", created_at),
+            )
+            conn.commit()
+
+    today = db._stats_period_window("today")
+    yesterday = db._stats_period_window("yesterday")
+    put_log(today["start_ts"] + 8 * 3600, 100, 1.5, "today-model")
+    put_log(yesterday["start_ts"] + 10 * 3600, 40, 0.4, "yday-model")
+    put_log(db._local_midnight_ts(date.today() - timedelta(days=10)) + 12 * 3600, 20, 0.2, "old-model")
+
+    today_stats = db.get_stats("today")
+    assert today_stats["period"] == "today"
+    assert today_stats["range"]["grain"] == "hour"
+    assert today_stats["range"]["requests"] == 1
+    assert today_stats["range"]["tokens"] == 100
+    assert len(today_stats["range"]["hourly"]) == 24
+    assert today_stats["range"]["hourly"][8]["tokens"] == 100
+    assert today_stats["today"]["tokens"] == 100
+    assert {row["model"] for row in today_stats["model_stats"]} == {"today-model"}
+
+    yday_stats = db.get_stats("yesterday")
+    assert yday_stats["range"]["requests"] == 1
+    assert yday_stats["range"]["tokens"] == 40
+    assert yday_stats["range"]["hourly"][10]["tokens"] == 40
+    assert yday_stats["today"]["tokens"] == 100
+    assert {row["model"] for row in yday_stats["model_stats"]} == {"yday-model"}
+
+    week = db.get_stats("7d")
+    assert week["range"]["grain"] == "day"
+    assert week["range"]["days"] == 7
+    assert len(week["range"]["daily"]) == 7
+    assert week["range"]["tokens"] == 140
+    assert len(week["daily"]) == 7
+
+    month = db.get_stats("30d")
+    assert month["range"]["days"] == 30
+    assert len(month["range"]["daily"]) == 30
+    assert month["range"]["tokens"] == 160
+    assert len(month["daily"]) == 30
+    assert {row["model"] for row in month["model_stats"]} == {"today-model", "yday-model", "old-model"}
+    assert month["periods"]["today"]["tokens"] == 100
+    assert month["periods"]["yesterday"]["tokens"] == 40
+    assert month["periods"]["7d"]["tokens"] == 140
+    assert month["periods"]["30d"]["tokens"] == 160
+
+
+def test_admin_stats_rejects_unknown_period(monkeypatch):
+    monkeypatch.setattr(server, "ALLOW_NO_ADMIN_AUTH", True)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(server.admin_stats(period="year", authorization=None))
+    assert error.value.status_code == 400
 
 
 def test_api_auth_fails_closed_without_keys(isolated_db, monkeypatch):

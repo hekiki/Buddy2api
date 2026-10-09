@@ -430,15 +430,22 @@ def test_dashboard_uses_line_and_pie_charts():
     html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
     assert "hour-line" in html
     assert "hour-poly" in html
+    assert "hour-bars" in html
+    assert "trend-bars" in html
+    assert "mini-bars" in html
     assert "qualityPie" in html
     assert "modelPie" in html
     assert "donut-split" in html
-    assert "spark-line" in html
     assert "mini-line" in html
-    assert "mini-dot" in html
     assert "近 7 日" in html
-    assert "hour-bars" not in html
-    assert "今日质量" in html
+    assert "昨日" in html
+    assert "七天" in html
+    assert "30天" in html
+    assert "柱状" in html
+    assert "面积" in html
+    assert "statsPeriod" in html
+    assert "s.value?.periods" in html
+    assert "/admin/stats?period=" in html
     assert "模型占比" in html
 
 

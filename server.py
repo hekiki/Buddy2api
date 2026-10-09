@@ -492,9 +492,14 @@ async def admin_channels(authorization: str | None = Header(default=None)):
 
 
 @app.get("/admin/stats")
-async def admin_stats(authorization: str | None = Header(default=None)):
+async def admin_stats(
+    period: str = "today",
+    authorization: str | None = Header(default=None),
+):
     _check_admin(authorization)
-    return await run_in_threadpool(db.get_stats)
+    if period not in db.STATS_PERIODS:
+        raise HTTPException(status_code=400, detail="invalid period")
+    return await run_in_threadpool(db.get_stats, period)
 
 
 @app.get("/admin/credit-summary")

@@ -36,9 +36,204 @@ def _key_prefix(key: str) -> str:
     return f"{key[:12]}...{key[-4:]}"
 
 
+STATS_PERIODS = ("today", "yesterday", "7d", "30d")
+
+
 def _today_start_ts() -> int:
     now = time.localtime()
     return int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, now.tm_wday, now.tm_yday, now.tm_isdst)))
+
+
+def _local_midnight_ts(day: date) -> int:
+    return int(time.mktime((day.year, day.month, day.day, 0, 0, 0, 0, 0, -1)))
+
+
+def _stats_period_window(period: str) -> dict:
+    if period not in STATS_PERIODS:
+        period = "today"
+    today = date.today()
+    today_start = _today_start_ts()
+    if period == "today":
+        start_day = today
+        end_exclusive = today + timedelta(days=1)
+        start_ts = today_start
+        end_ts = _local_midnight_ts(end_exclusive)
+        grain = "hour"
+        days = 1
+    elif period == "yesterday":
+        start_day = today - timedelta(days=1)
+        end_exclusive = today
+        start_ts = _local_midnight_ts(start_day)
+        end_ts = today_start
+        grain = "hour"
+        days = 1
+    elif period == "7d":
+        start_day = today - timedelta(days=6)
+        end_exclusive = today + timedelta(days=1)
+        start_ts = _local_midnight_ts(start_day)
+        end_ts = _local_midnight_ts(end_exclusive)
+        grain = "day"
+        days = 7
+    else:
+        start_day = today - timedelta(days=29)
+        end_exclusive = today + timedelta(days=1)
+        start_ts = _local_midnight_ts(start_day)
+        end_ts = _local_midnight_ts(end_exclusive)
+        grain = "day"
+        days = 30
+    end_inclusive = end_exclusive - timedelta(days=1)
+    return {
+        "period": period,
+        "grain": grain,
+        "days": days,
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "start_date": start_day.isoformat(),
+        "end_date": end_inclusive.isoformat(),
+    }
+
+
+def _query_range_totals(conn: sqlite3.Connection, start_ts: int, end_ts: int) -> dict:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) as requests,
+               COALESCE(SUM(total_tokens),0) as tokens,
+               COALESCE(SUM(credit),0) as credit,
+               COALESCE(AVG(duration_ms),0) as avg_duration_ms
+        FROM logs WHERE created_at >= ? AND created_at < ?
+        """,
+        (start_ts, end_ts),
+    ).fetchone()
+    success = conn.execute(
+        """
+        SELECT COUNT(*) as c FROM logs
+        WHERE created_at >= ? AND created_at < ?
+          AND status_code BETWEEN 200 AND 299
+          AND finish_reason NOT IN ('error', 'content_filter')
+        """,
+        (start_ts, end_ts),
+    ).fetchone()["c"]
+    errors = conn.execute(
+        """
+        SELECT COUNT(*) as c FROM logs
+        WHERE created_at >= ? AND created_at < ?
+          AND (status_code < 200 OR status_code >= 300 OR finish_reason='error')
+        """,
+        (start_ts, end_ts),
+    ).fetchone()["c"]
+    filtered = conn.execute(
+        """
+        SELECT COUNT(*) as c FROM logs
+        WHERE created_at >= ? AND created_at < ? AND finish_reason='content_filter'
+        """,
+        (start_ts, end_ts),
+    ).fetchone()["c"]
+    requests = int(row["requests"] or 0)
+    return {
+        "requests": requests,
+        "tokens": int(row["tokens"] or 0),
+        "credit": round(float(row["credit"] or 0), 4),
+        "success": int(success or 0),
+        "errors": int(errors or 0),
+        "filtered": int(filtered or 0),
+        "success_rate": round((success / requests * 100) if requests else 0, 2),
+        "avg_duration_ms": int(row["avg_duration_ms"] or 0),
+    }
+
+
+def _fill_hourly(conn: sqlite3.Connection, start_ts: int, end_ts: int) -> list[dict]:
+    hourly_rows = conn.execute(
+        """
+        SELECT CAST(strftime('%H', created_at, 'unixepoch', 'localtime') AS INTEGER) as hour,
+               COUNT(*) as requests,
+               COALESCE(SUM(total_tokens), 0) as tokens,
+               COALESCE(SUM(credit), 0) as credit
+        FROM logs WHERE created_at >= ? AND created_at < ?
+        GROUP BY hour ORDER BY hour
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+    hourly_by_hour = {int(r["hour"]): dict(r) for r in hourly_rows}
+    hourly = []
+    for hour in range(24):
+        row = hourly_by_hour.get(hour, {})
+        hourly.append({
+            "hour": hour,
+            "label": f"{hour:02d}:00",
+            "requests": int(row.get("requests") or 0),
+            "tokens": int(row.get("tokens") or 0),
+            "credit": round(float(row.get("credit") or 0), 4),
+        })
+    return hourly
+
+
+def _period_slice(conn: sqlite3.Connection, period: str) -> dict:
+    window = _stats_period_window(period)
+    start_ts = window["start_ts"]
+    end_ts = window["end_ts"]
+    start_day = date.fromisoformat(window["start_date"])
+    totals = _query_range_totals(conn, start_ts, end_ts)
+    hourly = _fill_hourly(conn, start_ts, end_ts) if window["grain"] == "hour" else []
+    daily = _fill_daily(conn, start_day, window["days"], start_ts, end_ts)
+    model_stats = conn.execute(
+        """
+        SELECT model, COUNT(*) as count, COALESCE(SUM(total_tokens),0) as tokens,
+               COALESCE(SUM(credit),0) as credit,
+               COALESCE(AVG(duration_ms),0) as avg_duration_ms
+        FROM logs
+        WHERE created_at >= ? AND created_at < ?
+        GROUP BY model ORDER BY count DESC LIMIT 10
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+    key_stats = conn.execute(
+        """
+        SELECT api_key_name as name, COUNT(*) as count, COALESCE(SUM(total_tokens),0) as tokens,
+               COALESCE(SUM(credit),0) as credit, MAX(created_at) as last_used_at
+        FROM logs
+        WHERE api_key_id IS NOT NULL AND created_at >= ? AND created_at < ?
+        GROUP BY api_key_id, api_key_name
+        ORDER BY count DESC LIMIT 5
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+    return {
+        **window,
+        **totals,
+        "hourly": hourly,
+        "daily": daily,
+        "model_stats": [dict(r) for r in model_stats],
+        "key_stats": [dict(r) for r in key_stats],
+    }
+
+
+def _fill_daily(conn: sqlite3.Connection, start_day: date, days: int, start_ts: int, end_ts: int) -> list[dict]:
+    daily_rows = conn.execute(
+        """
+        SELECT date(created_at, 'unixepoch', 'localtime') as date,
+               COUNT(*) as requests,
+               COALESCE(SUM(total_tokens), 0) as tokens,
+               COALESCE(SUM(credit), 0) as credits
+        FROM logs WHERE created_at >= ? AND created_at < ?
+        GROUP BY date ORDER BY date
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+    daily_by_date = {r["date"]: dict(r) for r in daily_rows}
+    daily = []
+    for i in range(days):
+        day = (start_day + timedelta(days=i)).isoformat()
+        row = daily_by_date.get(day, {})
+        credits = round(float(row.get("credits") or 0), 4)
+        daily.append({
+            "date": day,
+            "label": day[5:],
+            "requests": int(row.get("requests") or 0),
+            "tokens": int(row.get("tokens") or 0),
+            "credits": credits,
+            "credit": credits,
+        })
+    return daily
 
 
 def _load_allowed_models(value: Any) -> Optional[list]:
@@ -986,7 +1181,8 @@ def search_logs(filters: Optional[dict] = None) -> dict:
     }
 
 
-def get_stats() -> dict:
+def get_stats(period: str = "today") -> dict:
+    window = _stats_period_window(period)
     conn = get_conn()
     total_requests = conn.execute("SELECT COUNT(*) as c FROM logs").fetchone()["c"]
     total_tokens = conn.execute("SELECT COALESCE(SUM(total_tokens),0) as s FROM logs").fetchone()["s"]
@@ -1004,87 +1200,10 @@ def get_stats() -> dict:
     active_keys = conn.execute("SELECT COUNT(*) as c FROM api_keys WHERE status='active'").fetchone()["c"]
     total_keys = conn.execute("SELECT COUNT(*) as c FROM api_keys").fetchone()["c"]
 
-    today_start = _today_start_ts()
-    today = conn.execute("""
-        SELECT COUNT(*) as requests,
-               COALESCE(SUM(total_tokens),0) as tokens,
-               COALESCE(SUM(credit),0) as credit,
-               COALESCE(AVG(duration_ms),0) as avg_duration_ms
-        FROM logs WHERE created_at >= ?
-    """, (today_start,)).fetchone()
-    today_success = conn.execute("""
-        SELECT COUNT(*) as c FROM logs
-        WHERE created_at >= ?
-          AND status_code BETWEEN 200 AND 299
-          AND finish_reason NOT IN ('error', 'content_filter')
-    """, (today_start,)).fetchone()["c"]
-    today_errors = conn.execute("""
-        SELECT COUNT(*) as c FROM logs
-        WHERE created_at >= ? AND (status_code < 200 OR status_code >= 300 OR finish_reason='error')
-    """, (today_start,)).fetchone()["c"]
-    today_filtered = conn.execute(
-        "SELECT COUNT(*) as c FROM logs WHERE created_at >= ? AND finish_reason='content_filter'",
-        (today_start,),
-    ).fetchone()["c"]
-
-    hourly_rows = conn.execute("""
-        SELECT CAST(strftime('%H', created_at, 'unixepoch', 'localtime') AS INTEGER) as hour,
-               COUNT(*) as requests,
-               COALESCE(SUM(total_tokens), 0) as tokens,
-               COALESCE(SUM(credit), 0) as credit
-        FROM logs WHERE created_at >= ?
-        GROUP BY hour ORDER BY hour
-    """, (today_start,)).fetchall()
-    hourly_by_hour = {int(r["hour"]): dict(r) for r in hourly_rows}
-    hourly = []
-    for hour in range(24):
-        row = hourly_by_hour.get(hour, {})
-        hourly.append({
-            "hour": hour,
-            "label": f"{hour:02d}:00",
-            "requests": int(row.get("requests") or 0),
-            "tokens": int(row.get("tokens") or 0),
-            "credit": round(float(row.get("credit") or 0), 4),
-        })
-
-    # 最近 7 个自然日每日统计，补齐 0 值日期，避免图表只显示一根柱子。
-    seven_days_ago = _today_start_ts() - 6 * 86400
-    daily_rows = conn.execute("""
-        SELECT date(created_at, 'unixepoch', 'localtime') as date,
-               COUNT(*) as requests,
-               COALESCE(SUM(total_tokens), 0) as tokens,
-               COALESCE(SUM(credit), 0) as credits
-        FROM logs WHERE created_at >= ?
-        GROUP BY date ORDER BY date
-    """, (seven_days_ago,)).fetchall()
-    daily_by_date = {r["date"]: dict(r) for r in daily_rows}
-    today_date = date.today()
-    daily = []
-    for i in range(6, -1, -1):
-        day = (today_date - timedelta(days=i)).isoformat()
-        daily.append(daily_by_date.get(day, {
-            "date": day,
-            "requests": 0,
-            "tokens": 0,
-            "credits": 0,
-        }))
-
-    # 模型使用统计
-    model_stats = conn.execute("""
-        SELECT model, COUNT(*) as count, COALESCE(SUM(total_tokens),0) as tokens,
-               COALESCE(SUM(credit),0) as credit,
-               COALESCE(AVG(duration_ms),0) as avg_duration_ms
-        FROM logs GROUP BY model ORDER BY count DESC LIMIT 10
-    """).fetchall()
-
-    key_stats = conn.execute("""
-        SELECT api_key_name as name, COUNT(*) as count, COALESCE(SUM(total_tokens),0) as tokens,
-               COALESCE(SUM(credit),0) as credit, MAX(created_at) as last_used_at
-        FROM logs
-        WHERE api_key_id IS NOT NULL
-        GROUP BY api_key_id, api_key_name
-        ORDER BY count DESC LIMIT 5
-    """).fetchall()
+    periods = {item: _period_slice(conn, item) for item in STATS_PERIODS}
+    selected = periods[window["period"]]
+    today_slice = periods["today"]
+    daily = periods["30d"]["daily"] if window["period"] == "30d" else periods["7d"]["daily"]
 
     account_stats = conn.execute("""
         SELECT id, name, nickname, status, total_requests, total_tokens, total_credits, last_used_at
@@ -1109,24 +1228,27 @@ def get_stats() -> dict:
         "filtered_requests": filtered_requests,
         "success_rate": round((success_requests / total_requests * 100) if total_requests else 0, 2),
         "avg_duration_ms": int(avg_duration_ms or 0),
+        "period": window["period"],
+        "range": selected,
+        "periods": periods,
         "today": {
-            "requests": int(today["requests"] or 0),
-            "tokens": int(today["tokens"] or 0),
-            "credit": round(float(today["credit"] or 0), 4),
-            "success": int(today_success or 0),
-            "errors": int(today_errors or 0),
-            "filtered": int(today_filtered or 0),
-            "success_rate": round((today_success / today["requests"] * 100) if today["requests"] else 0, 2),
-            "avg_duration_ms": int(today["avg_duration_ms"] or 0),
-            "hourly": hourly,
+            "requests": today_slice["requests"],
+            "tokens": today_slice["tokens"],
+            "credit": today_slice["credit"],
+            "success": today_slice["success"],
+            "errors": today_slice["errors"],
+            "filtered": today_slice["filtered"],
+            "success_rate": today_slice["success_rate"],
+            "avg_duration_ms": today_slice["avg_duration_ms"],
+            "hourly": today_slice["hourly"],
         },
         "active_accounts": active_accounts,
         "total_accounts": total_accounts,
         "active_keys": active_keys,
         "total_keys": total_keys,
         "daily": daily,
-        "model_stats": [dict(r) for r in model_stats],
-        "key_stats": [dict(r) for r in key_stats],
+        "model_stats": selected["model_stats"],
+        "key_stats": selected["key_stats"],
         "account_stats": [dict(r) for r in account_stats],
         "recent_logs": [dict(r) for r in recent_logs],
     }
