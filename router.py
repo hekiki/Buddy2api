@@ -161,6 +161,82 @@ async def ensure_usable(channel: str) -> None:
     )
 
 
+def _prompt_char_count(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, list):
+        return sum(_prompt_char_count(item) for item in value)
+    if isinstance(value, dict):
+        return sum(_prompt_char_count(item) for item in value.values())
+    return len(str(value))
+
+
+def estimate_prompt_tokens(payload: dict) -> int:
+    """Rough prompt size used only for the Codex pre-flight gate."""
+    return max(1, _prompt_char_count(payload) // 4)
+
+
+CODEX_PROMPT_TOKEN_CAP = 500000
+
+
+def codex_prompt_limit(channel: str, model: str) -> tuple[int, int]:
+    """Return the Codex-only input budget and the window used to derive it."""
+    from model_capacity import capacity_fields
+    import catalog
+
+    row = next(
+        (item for item in catalog.current_models(channel) if item.get("id") == model),
+        {},
+    )
+    confirmed = capacity_fields(row).get("context_window")
+    window = min(confirmed, CODEX_PROMPT_TOKEN_CAP) if confirmed else CODEX_PROMPT_TOKEN_CAP
+    return max(1, window - 32768), window
+
+
+def _trim_message_list(messages: list, limit: int) -> list:
+    """Drop oldest non-system turns until the estimated prompt fits."""
+    kept = list(messages)
+    while estimate_prompt_tokens({"messages": kept}) > limit and len(kept) > 1:
+        drop_at = next(
+            (index for index, message in enumerate(kept) if not (isinstance(message, dict) and message.get("role") == "system")),
+            None,
+        )
+        if drop_at is None:
+            drop_at = 0
+        kept.pop(drop_at)
+    return kept
+
+
+def trim_codex_prompt(payload: dict, channel: str, model: str) -> dict:
+    """Trim old Codex history so the current turn can continue."""
+    limit, window = codex_prompt_limit(channel, model)
+    if estimate_prompt_tokens(payload) <= limit:
+        return payload
+    trimmed = copy.deepcopy(payload)
+    if isinstance(trimmed.get("input"), list):
+        trimmed["input"] = _trim_message_list(trimmed["input"], limit)
+    elif isinstance(trimmed.get("messages"), list):
+        trimmed["messages"] = _trim_message_list(trimmed["messages"], limit)
+    if estimate_prompt_tokens(trimmed) <= limit:
+        return trimmed
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": {
+                "message": (
+                    f"Codex prompt is too long for {model}: the newest request still exceeds "
+                    f"the {limit}-token Codex budget ({window}-token window) after trimming old history."
+                ),
+                "type": "invalid_request_error",
+                "code": "prompt_too_long",
+                "param": "input",
+            }
+        },
+    )
+
+
 def dispatch_payload(payload: dict, inner: str) -> dict:
     body = copy.copy(payload)
     body["model"] = inner

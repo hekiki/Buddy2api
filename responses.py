@@ -134,16 +134,73 @@ def apply_codex_sanitize(chat_payload: dict) -> dict:
     return chat_payload
 
 
+def _structured_response_format(resp_payload: dict) -> Optional[dict]:
+    """Map Responses text.format onto Chat response_format.
+
+    Only json_schema and json_object are forwarded. text and ordinary requests
+    stay unchanged so existing Codex conversations are not forced into JSON.
+    """
+    text = resp_payload.get("text")
+    if not isinstance(text, dict):
+        return None
+    fmt = text.get("format")
+    if not isinstance(fmt, dict):
+        return None
+    fmt_type = fmt.get("type")
+    if fmt_type == "json_object":
+        return {"type": "json_object"}
+    if fmt_type != "json_schema":
+        return None
+
+    schema_obj = {}
+    for key in ("type", "name", "schema", "strict", "description"):
+        if key in fmt:
+            schema_obj[key] = fmt[key]
+    return {"type": "json_schema", "json_schema": schema_obj}
+
+
+def _structured_output_instruction(response_format: dict) -> Optional[str]:
+    """Ask for schema JSON without folding the constraint into instructions.
+
+    Long Codex instructions are replaced wholesale by _sanitize_system_content.
+    This must remain a separate system message so that replacement cannot drop it.
+    """
+    if not isinstance(response_format, dict):
+        return None
+    fmt_type = response_format.get("type")
+    if fmt_type == "json_object":
+        return (
+            "Respond with a single JSON object only. "
+            "Do not include markdown, commentary, or code fences."
+        )
+    if fmt_type != "json_schema":
+        return None
+
+    schema_obj = response_format.get("json_schema")
+    schema = schema_obj.get("schema") if isinstance(schema_obj, dict) else None
+    parts = [
+        "Respond with a single JSON object that matches the required schema. "
+        "Do not include markdown, commentary, or code fences."
+    ]
+    if isinstance(schema, dict) and schema:
+        try:
+            parts.append("Schema: " + json.dumps(schema, ensure_ascii=False))
+        except (TypeError, ValueError):
+            pass
+    return "\n".join(parts)
+
+
 def responses_to_chat(resp_payload: dict) -> dict:
     """
     将 Responses API 请求转换为 Chat Completions 请求。
     
     Responses 请求结构:
       model, input[], instructions, tools[], stream, temperature,
-      max_output_tokens, reasoning.effort
+      max_output_tokens, reasoning.effort, text.format
     
     Chat 请求结构:
-      model, messages[], tools[], stream, temperature, max_tokens
+      model, messages[], tools[], stream, temperature, max_tokens,
+      response_format
     """
     messages = []
 
@@ -155,6 +212,14 @@ def responses_to_chat(resp_payload: dict) -> dict:
             inst_content = _sanitize_system_content(inst_content)
             msg = {"role": "system", "content": inst_content}
             messages.append(msg)
+
+    # Keep this separate from instructions. Codex prompts longer than the
+    # sanitizer limit are replaced wholesale, which would drop an inlined schema.
+    response_format = _structured_response_format(resp_payload)
+    if response_format:
+        constraint = _structured_output_instruction(response_format)
+        if constraint:
+            messages.append({"role": "system", "content": constraint})
 
     # input[] → messages[]
     inp = resp_payload.get("input")
@@ -251,6 +316,8 @@ def responses_to_chat(resp_payload: dict) -> dict:
         chat_payload["max_tokens"] = resp_payload["max_output_tokens"]
     if resp_payload.get("top_p") is not None:
         chat_payload["top_p"] = resp_payload["top_p"]
+    if response_format is not None:
+        chat_payload["response_format"] = response_format
 
     # Responses prefers reasoning.effort. Compatibility forms used by
     # OpenCode, DSH, Cherry Studio, and Claude-style clients are normalized
@@ -446,10 +513,20 @@ def _looks_like_codex_prompt(content: str) -> bool:
     prompt 不含这些标记，直接原样透传，避免误伤：DSH 等 harness 的
     prompt 远超 1200 字符，一旦被兜底规则整体替换成最小安全 prompt，
     模型会丢失全部工具使用指令，退化成纯对话。
+
+    新版 Codex 不再携带旧权限块。只在产品身份和 agent 标记同时出现时识别，
+    避免其他客户端仅提到 Codex 或 coding agent 就被改写。
     """
     if not content:
         return False
-    return any(marker in content for marker in _CODEX_PROMPT_MARKERS)
+    if any(marker in content for marker in _CODEX_PROMPT_MARKERS):
+        return True
+    lowered = content.lower()
+    has_identity = "you are codex" in lowered or "codex cli" in lowered
+    has_agent_marker = any(
+        marker in lowered for marker in ("coding agent", "approval", "sandbox", "shell")
+    )
+    return has_identity and has_agent_marker
 
 
 def _sanitize_system_content(content: str) -> str:

@@ -241,6 +241,8 @@ _BUILTIN_ALIASES = {
     "gpt-5.4-codex": "glm-5.2",
     "gpt-5.1": "glm-5.2",
     "gpt-5.1-codex": "glm-5.2",
+    # Codex automatic approval review uses its own model id.
+    "gpt-5.6-luna": "deepseek-v4-flash",
     "gpt-5": "glm-5.2",
     "gpt-5-mini": "glm-5.1",
     # GPT-4.x 系列

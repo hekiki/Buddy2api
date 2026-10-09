@@ -442,6 +442,8 @@ async def resp_responses(
         raise _invalid_reasoning_http(exc) from exc
     bound = router.bind_http(payload, api_key_info)
     _check_model_access(api_key_info, bound.original, bound.inner, bound.channel)
+    if api_key_info and api_key_info.get("client_type") == "codex":
+        payload = router.trim_codex_prompt(payload, bound.channel, bound.inner)
     await router.ensure_usable(bound.channel)
     await run_in_threadpool(_reserve_client_quota, api_key_info)
     try:
