@@ -1066,7 +1066,6 @@ def test_responses_to_chat_maps_guardian_json_schema_without_touching_text_reque
     assert chat_payload["response_format"] == {
         "type": "json_schema",
         "json_schema": {
-            "type": "json_schema",
             "name": "guardian_assessment",
             "schema": GUARDIAN_SCHEMA,
             "strict": True,
@@ -1147,6 +1146,32 @@ def test_codex_prompt_gate_trims_old_history_and_keeps_latest(monkeypatch):
     assert len(trimmed["input"]) < len(payload["input"])
     assert router.estimate_prompt_tokens(trimmed) <= 30
     assert proxy.resolve_model_alias("gpt-5.6-luna") == "deepseek-v4-flash"
+
+
+def test_codex_trim_counts_cjk_and_keeps_tool_pairs(monkeypatch):
+    assert router.estimate_prompt_tokens({"input": "你" * 4000}) >= 4000
+
+    payload = {
+        "model": "deepseek-v4-flash",
+        "instructions": "I" * 160,
+        "input": [
+            {"type": "function_call", "call_id": "c1", "name": "shell", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "R" * 400},
+            {"type": "message", "role": "user", "content": "latest"},
+        ],
+    }
+    monkeypatch.setattr(
+        router,
+        "codex_prompt_limit",
+        lambda channel, model: (router.estimate_prompt_tokens(payload) - 1, 128),
+    )
+
+    trimmed = router.trim_codex_prompt(payload, "workbuddy", "deepseek-v4-flash")
+
+    assert [item.get("type") for item in trimmed["input"]] == ["message"]
+    assert trimmed["input"][-1]["content"] == "latest"
+    assert trimmed["instructions"] == "I" * 160
+    assert router.estimate_prompt_tokens(trimmed) <= router.estimate_prompt_tokens(payload) - 1
 
 
 def test_responses_stream_reassembles_byte_split_tool_arguments():
@@ -3317,11 +3342,14 @@ def test_current_codex_prompt_is_replaced_when_legacy_markers_are_absent():
 
 def test_mentions_of_codex_or_coding_agent_alone_are_not_sanitized():
     prompt = "This note mentions Codex but is not the Codex client prompt. " + ("x" * 1500)
+    quoted = "The docs say you are Codex when using the shell. " + ("x" * 1500)
     payload = {"instructions": prompt, "input": "hello"}
 
     chat_payload = responses.responses_to_chat(payload)
+    quoted_payload = responses.responses_to_chat({"instructions": quoted, "input": "hello"})
 
     assert chat_payload["messages"][0]["content"] == prompt
+    assert quoted_payload["messages"][0]["content"] == quoted
 
 
 def test_codex_sanitize_passthrough_without_system_prompt():

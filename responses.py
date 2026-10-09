@@ -152,10 +152,19 @@ def _structured_response_format(resp_payload: dict) -> Optional[dict]:
     if fmt_type != "json_schema":
         return None
 
-    schema_obj = {}
-    for key in ("type", "name", "schema", "strict", "description"):
-        if key in fmt:
-            schema_obj[key] = fmt[key]
+    nested = fmt.get("json_schema") if isinstance(fmt.get("json_schema"), dict) else {}
+    schema = nested.get("schema", fmt.get("schema"))
+    schema_obj = {
+        "name": nested.get("name") or fmt.get("name") or "response",
+        "schema": schema if isinstance(schema, dict) else {},
+    }
+    description = nested.get("description", fmt.get("description"))
+    if description is not None:
+        schema_obj["description"] = description
+    if "strict" in nested:
+        schema_obj["strict"] = nested["strict"]
+    elif "strict" in fmt:
+        schema_obj["strict"] = fmt["strict"]
     return {"type": "json_schema", "json_schema": schema_obj}
 
 
@@ -522,7 +531,8 @@ def _looks_like_codex_prompt(content: str) -> bool:
     if any(marker in content for marker in _CODEX_PROMPT_MARKERS):
         return True
     lowered = content.lower()
-    has_identity = "you are codex" in lowered or "codex cli" in lowered
+    # 身份句必须出现在提示开头。正文里顺带提到 “you are Codex” 不能触发整段替换。
+    has_identity = lowered.lstrip().startswith("you are codex") or "codex cli" in lowered
     has_agent_marker = any(
         marker in lowered for marker in ("coding agent", "approval", "sandbox", "shell")
     )
